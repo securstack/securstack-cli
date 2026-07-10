@@ -1,0 +1,17 @@
+{
+  "name": "@securstack/cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cliente local do SecurStack para scans de seguranca em repositorios.",
+  "type": "module",
+  "bin": {
+    "securstack": "./bin/securstack.js"
+  },
+  "scripts": {
+    "start": "node ./bin/securstack.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
