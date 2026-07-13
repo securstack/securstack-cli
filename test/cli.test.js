@@ -2,10 +2,12 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateKeyPairSync } from 'node:crypto';
+import { gunzipSync } from 'node:zlib';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   collectFiles,
+  createPackageArchive,
   encryptLocalScanPayload,
   evaluatePolicy,
   gitHookStatus,
@@ -33,6 +35,30 @@ test('collectFiles respects default and project ignore rules', () => {
     assert.deepEqual(files, ['.gitignore', '.securstackignore', 'src/app.js']);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('createPackageArchive has a portable tar.gz fallback without external tar', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'securstack-cli-package-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'securstack-cli-package-out-'));
+  try {
+    mkdirSync(join(root, 'src'));
+    mkdirSync(join(root, 'node_modules'));
+    writeFileSync(join(root, '.securstackignore'), 'private.txt\n');
+    writeFileSync(join(root, 'src', 'app.js'), 'console.log("ok");\n');
+    writeFileSync(join(root, 'private.txt'), 'ignored\n');
+    writeFileSync(join(root, 'node_modules', 'dep.js'), 'ignored\n');
+
+    const archivePath = await createPackageArchive(root, tempDir, 1024 * 1024, { forcePortable: true });
+    const tar = gunzipSync(readFileSync(archivePath));
+
+    assert.equal(tarIncludes(tar, 'src/app.js'), true);
+    assert.equal(tarIncludes(tar, '.securstackignore'), true);
+    assert.equal(tarIncludes(tar, 'private.txt'), false);
+    assert.equal(tarIncludes(tar, 'node_modules/dep.js'), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(tempDir, { recursive: true, force: true });
   }
 });
 
@@ -129,3 +155,19 @@ test('installGitHook appends and removes only the SecurStack block', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+function tarIncludes(buffer, expectedName) {
+  let offset = 0;
+  while (offset + 512 <= buffer.length) {
+    const header = buffer.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) return false;
+    const name = header.subarray(0, 100).toString('utf8').replace(/\0.*$/, '');
+    const prefix = header.subarray(345, 500).toString('utf8').replace(/\0.*$/, '');
+    const fullName = prefix ? `${prefix}/${name}` : name;
+    const sizeText = header.subarray(124, 136).toString('ascii').replace(/\0.*$/, '').trim();
+    const size = Number.parseInt(sizeText || '0', 8);
+    if (fullName === expectedName) return true;
+    offset += 512 + Math.ceil(size / 512) * 512;
+  }
+  return false;
+}

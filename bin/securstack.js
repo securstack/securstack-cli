@@ -6,6 +6,8 @@ import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { basename, join, relative, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
+import { once } from 'node:events';
+import { createGzip } from 'node:zlib';
 
 export const defaultApiUrl = 'https://api.securstack.io/api';
 const configDir = join(homedir(), '.securstack');
@@ -164,7 +166,7 @@ async function uploadLocalRepositoryPackage(config, workspace, scanRequest, opti
       environment: scanRequest.environment,
       engines: scanRequest.engines
     });
-    const archivePath = createPackageArchive(workspace, tempDir, options.maxPackageBytes);
+    const archivePath = await createPackageArchive(workspace, tempDir, options.maxPackageBytes);
     const encryptedPath = join(tempDir, 'repository.tar.gz.enc');
     const encrypted = await encryptPackageArchive(archivePath, encryptedPath, upload);
     const partCount = await uploadPackageParts(config, upload.uploadId, encryptedPath, upload.maxPartBytes);
@@ -182,8 +184,14 @@ async function uploadLocalRepositoryPackage(config, workspace, scanRequest, opti
   }
 }
 
-function createPackageArchive(workspace, tempDir, maxBytes) {
+export async function createPackageArchive(workspace, tempDir, maxBytes, options = {}) {
   const archivePath = join(tempDir, 'repository.tar.gz');
+  if (options.forcePortable) {
+    await createPortablePackageArchive(workspace, archivePath);
+    assertPackageSize(archivePath, maxBytes);
+    return archivePath;
+  }
+
   const excludeArgs = [
     ...[...defaultIgnoreDirs].map((name) => `--exclude=${name}`),
     ...[...defaultIgnoreFiles].map((name) => `--exclude=${name}`),
@@ -194,13 +202,130 @@ function createPackageArchive(workspace, tempDir, maxBytes) {
     maxBuffer: 20 * 1024 * 1024
   });
   if (result.status !== 0) {
+    if (result.error?.code === 'ENOENT') {
+      await createPortablePackageArchive(workspace, archivePath);
+      assertPackageSize(archivePath, maxBytes);
+      return archivePath;
+    }
     throw new Error((result.stderr || 'Failed to package repository for scan').trim());
   }
+  assertPackageSize(archivePath, maxBytes);
+  return archivePath;
+}
+
+function assertPackageSize(archivePath, maxBytes) {
   const sizeBytes = statSync(archivePath).size;
   if (sizeBytes > maxBytes) {
     throw new Error(`Repository package is too large (${sizeBytes} bytes). Current limit is ${maxBytes} bytes.`);
   }
-  return archivePath;
+}
+
+async function createPortablePackageArchive(workspace, archivePath) {
+  const gzip = createGzip();
+  const output = createWriteStream(archivePath, { mode: 0o600 });
+  gzip.pipe(output);
+
+  try {
+    for (const filePath of collectPackageFilePaths(workspace)) {
+      const stat = statSync(filePath);
+      const relPath = normalizePath(relative(workspace, filePath));
+      await writeTarHeader(gzip, relPath, stat.size, stat.mode, stat.mtime);
+      await pipeline(createReadStream(filePath), gzip, { end: false });
+      await writeTarPadding(gzip, stat.size);
+    }
+    await writeStreamChunk(gzip, Buffer.alloc(1024));
+    gzip.end();
+    await once(output, 'finish');
+  } catch (error) {
+    gzip.destroy(error);
+    output.destroy(error);
+    throw error;
+  }
+}
+
+function collectPackageFilePaths(root) {
+  const ignoreRules = loadIgnoreRules(root);
+  const files = [];
+
+  function walk(dir) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = join(dir, entry.name);
+      const relPath = normalizePath(relative(root, fullPath));
+      if (shouldIgnore(relPath, entry, ignoreRules)) continue;
+
+      if (entry.isDirectory()) {
+        walk(fullPath);
+        continue;
+      }
+      if (entry.isFile()) files.push(fullPath);
+    }
+  }
+
+  walk(root);
+  return files;
+}
+
+async function writeTarHeader(stream, name, size, mode, mtime) {
+  const header = Buffer.alloc(512, 0);
+  const { fileName, prefix } = splitTarName(name);
+  writeTarString(header, fileName, 0, 100);
+  writeTarOctal(header, mode & 0o777, 100, 8);
+  writeTarOctal(header, 0, 108, 8);
+  writeTarOctal(header, 0, 116, 8);
+  writeTarOctal(header, size, 124, 12);
+  writeTarOctal(header, Math.floor(mtime.getTime() / 1000), 136, 12);
+  header.fill(0x20, 148, 156);
+  header[156] = '0'.charCodeAt(0);
+  writeTarString(header, 'ustar', 257, 6);
+  writeTarString(header, '00', 263, 2);
+  writeTarString(header, 'securstack', 265, 32);
+  writeTarString(header, 'securstack', 297, 32);
+  writeTarString(header, prefix, 345, 155);
+
+  let checksum = 0;
+  for (const byte of header) checksum += byte;
+  writeTarChecksum(header, checksum);
+  await writeStreamChunk(stream, header);
+}
+
+function splitTarName(name) {
+  const normalized = normalizePath(name).replace(/^\/+/, '');
+  if (Buffer.byteLength(normalized) <= 100) return { fileName: normalized, prefix: '' };
+
+  const parts = normalized.split('/');
+  let fileName = parts.pop() || '';
+  let prefix = parts.join('/');
+  while ((Buffer.byteLength(fileName) > 100 || Buffer.byteLength(prefix) > 155) && parts.length) {
+    fileName = `${parts.pop()}/${fileName}`;
+    prefix = parts.join('/');
+  }
+  if (Buffer.byteLength(fileName) > 100 || Buffer.byteLength(prefix) > 155) {
+    throw new Error(`Path is too long for portable tar archive: ${normalized}`);
+  }
+  return { fileName, prefix };
+}
+
+function writeTarString(buffer, value, offset, length) {
+  buffer.write(String(value).slice(0, length), offset, length, 'utf8');
+}
+
+function writeTarOctal(buffer, value, offset, length) {
+  const text = Math.max(0, Number(value) || 0).toString(8).padStart(length - 1, '0');
+  buffer.write(`${text}\0`.slice(-length), offset, length, 'ascii');
+}
+
+function writeTarChecksum(buffer, value) {
+  const text = value.toString(8).padStart(6, '0');
+  buffer.write(`${text}\0 `, 148, 8, 'ascii');
+}
+
+async function writeTarPadding(stream, size) {
+  const padding = (512 - (size % 512)) % 512;
+  if (padding > 0) await writeStreamChunk(stream, Buffer.alloc(padding));
+}
+
+async function writeStreamChunk(stream, chunk) {
+  if (!stream.write(chunk)) await once(stream, 'drain');
 }
 
 async function encryptPackageArchive(archivePath, encryptedPath, session) {
@@ -258,7 +383,7 @@ async function hooks(args) {
   const repo = resolve(stringOption(options, 'path') || process.cwd());
 
   if (action === 'install') {
-    const result = installGitHook(repo, policyOptions(options), stringOption(options, 'command') || 'securstack');
+    const result = installGitHook(repo, policyOptions(options), stringOption(options, 'command') || defaultHookCommand());
     console.log(JSON.stringify(result, null, 2));
     return;
   }
@@ -381,6 +506,10 @@ echo "SecurStack: executando scan pre-commit..."
 ${command} scan --path . --format json --output .git/securstack-last-scan.json
 ${command} policy check --input .git/securstack-last-scan.json ${policyArgsText}
 # securstack hook end`;
+}
+
+function defaultHookCommand() {
+  return process.platform === 'win32' ? 'securstack.cmd' : 'securstack';
 }
 
 function replaceSecurStackHook(content, block) {

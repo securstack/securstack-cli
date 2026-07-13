@@ -12,6 +12,14 @@ Cliente local do SecurStack para executar scans de seguranca em repositorios loc
 
 O CLI recebe resposta sincrona da API, mas os motores de analise rodam no SaaS do SecurStack, nos workers internos.
 
+## Plataformas suportadas
+
+O CLI suporta macOS, Linux e Windows com Node.js 20 ou superior.
+
+No Windows, o binario npm pode ser resolvido como `securstack.cmd`. O comando de hook `pre-commit` e executado pelo ambiente Git instalado na maquina, normalmente Git for Windows/Git Bash.
+
+Quando o scan precisa enviar um pacote do repositorio, o CLI usa `tar` do sistema quando disponivel e possui fallback portavel em Node.js para ambientes Windows ou maquinas sem `tar`.
+
 ## Uso inicial
 
 ```bash
