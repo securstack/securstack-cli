@@ -1,13 +1,15 @@
 #!/usr/bin/env node
-import { createCipheriv, createHash, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes, createPublicKey } from 'node:crypto';
+import { createCipheriv, createHash, createHmac, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes, createPublicKey, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, createReadStream, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { basename, join, relative, resolve } from 'node:path';
+import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { once } from 'node:events';
 import { createGzip } from 'node:zlib';
+import { canonicalApiAttestationProofString, runtimeThreatTypeSchema } from '@securstack/core/v1';
 
 export const defaultApiUrl = 'https://api.securstack.io/api';
 const configDir = join(homedir(), '.securstack');
@@ -20,6 +22,22 @@ const maxPackageBytes = 500 * 1024 * 1024;
 const maxFiles = 5000;
 const cryptoInfo = Buffer.from('securstack-local-repository-scan-v1');
 const packageCryptoInfo = Buffer.from('securstack-local-repository-package-v1');
+const shieldingRuntimeThreatAliases = new Map([
+  ['root', 'root_detected'],
+  ['jailbreak', 'jailbreak_detected'],
+  ['hooking', 'hooking_detected'],
+  ['frida', 'frida_detected'],
+  ['debugger', 'debugger_detected'],
+  ['tamper', 'tamper_detected'],
+  ['repackaging', 'repackaging_detected'],
+  ['emulator', 'emulator_detected'],
+  ['simulator', 'simulator_detected'],
+  ['bot', 'bot_detected'],
+  ['replay', 'replay_detected'],
+  ['api_attestation', 'api_attestation_invalid'],
+  ['session_integrity', 'session_integrity_invalid']
+]);
+const shieldingRuntimeThreatTypes = new Set(runtimeThreatTypeSchema.options);
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
@@ -45,6 +63,10 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (command === 'scan') {
     await scan(args);
+    return;
+  }
+  if (command === 'shielding') {
+    await shielding(args);
     return;
   }
   if (command === 'hooks') {
@@ -74,6 +96,38 @@ Usage:
   securstack login --api-key <key> [--api-url <url>]
   securstack logout
   securstack scan [--path <dir>] [--format json|sarif] [--output <file>] [--engine secrets --engine iac] [--locale en-US|pt-BR] [--upload-mode auto|json|package] [--no-wait]
+  securstack shielding create-app --name <name> --platform android|ios --package-name <package|bundle> [--project-id <id>] [--environment dev|staging|prod ...] [--tenant-id <id>]
+  securstack shielding list-apps [--tenant-id <id>]
+  securstack shielding get-app --app-id <id> [--tenant-id <id>]
+  securstack shielding entitlements [--tenant-id <id>]
+  securstack shielding usage [--tenant-id <id>]
+  securstack shielding create-policy --name <name> --mode audit|warn|block --required-protection <type> ... [--optional-protection <type> ...] [--app-id <id>] [--tenant-id <id>]
+  securstack shielding update-policy --policy-id <id> [--mode audit|warn|block] [--required-protection <type> ...] [--optional-protection <type> ...] [--tenant-id <id>]
+  securstack shielding list-policies [--tenant-id <id>]
+  securstack shielding upload-artifact --app-id <id> --file <apk|aab|ipa> --artifact-type apk|aab|ipa [--tenant-id <id>]
+  securstack shielding get-artifact --artifact-id <id> [--tenant-id <id>]
+  securstack shielding build --app-id <id> --artifact-id <id> --policy-id <id> [--environment prod] [--signing-mode customer|managed] [--idempotency-key <key>] [--async] [--wait] [--gate-check] [--tenant-id <id>]
+  securstack shielding list-builds [--tenant-id <id>]
+  securstack shielding get-build --build-id <id> [--tenant-id <id>]
+  securstack shielding gate --build-id <id> [--tenant-id <id>]
+  securstack shielding release-gate --build-id <id> [--tenant-id <id>]
+  securstack shielding evidence --build-id <id> [--export] [--format json|summary] [--fail-on-verification] [--tenant-id <id>]
+  securstack shielding list-evidence [--tenant-id <id>]
+  securstack shielding signing-job --build-id <id> --mode customer|managed [--key-ref <ref>] [--certificate-ref <ref>] [--tenant-id <id>]
+  securstack shielding list-signing-jobs [--tenant-id <id>]
+  securstack shielding get-signing-job --signing-job-id <id> [--tenant-id <id>]
+  securstack shielding create-integration --name <name> --type generic_webhook|splunk_hec --endpoint-url <https-url> [--event-type <type> ...] [--header "Name: value" ...] [--bearer-token <token>] [--shared-secret <secret>] [--tenant-id <id>]
+  securstack shielding list-integrations [--tenant-id <id>]
+  securstack shielding update-integration --integration-id <id> [--enabled true|false] [--endpoint-url <https-url>] [--event-type <type> ...] [--header "Name: value" ...] [--bearer-token <token>] [--shared-secret <secret>] [--tenant-id <id>]
+  securstack shielding integration-deliveries [--tenant-id <id>]
+  securstack shielding runtime-event --app-id <id> --platform android|ios --threat-type <type> --severity info|low|medium|high|critical [--build-id <id>] [--observed-at <iso>] [--metadata-json <json>] [--tenant-id <id>]
+  securstack shielding runtime-events [--tenant-id <id>]
+  securstack shielding risk-summary --app-id <id> [--tenant-id <id>]
+  securstack shielding retention [--execute] [--tenant-id <id>]
+  securstack shielding attest --app-id <id> --platform android|ios [--build-id <id>] [--endpoint <path>] [--protected-sha256 <sha256>] [--artifact-stage protected|signed] [--signed-sha256 <sha256>] [--evidence-fingerprint <fingerprint>] [--hmac-secret <secret>] [--tenant-id <id>]
+  securstack shielding resolve-threat --code SSK-XXXXXXXX [--resolved-by <user>] [--resolution-note <text>] [--tenant-id <id>]
+  securstack shielding download-url --build-id <id> [--tenant-id <id>]
+  securstack shielding download --build-id <id> --output <file> [--tenant-id <id>]
   securstack hooks install [--path <repo>] [--max-risk-score <score>] [--max-critical <n>] [--max-high <n>] [--max-medium <n>] [--max-low <n>]
   securstack hooks uninstall [--path <repo>]
   securstack hooks status [--path <repo>]
@@ -84,6 +138,7 @@ Usage:
 Environment:
   SECURSTACK_API_KEY
   SECURSTACK_API_URL
+  SECURSTACK_TENANT_ID
 `);
 }
 
@@ -412,6 +467,549 @@ async function policy(args) {
   const result = evaluatePolicy(scan, policyOptions(options));
   console.log(JSON.stringify(result, null, 2));
   if (!result.allowed) process.exitCode = 1;
+}
+
+async function shielding(args) {
+  const [action, ...rest] = args;
+  if (!action) throw new Error('Missing shielding action. Use: securstack shielding create-app|list-apps|get-app|entitlements|usage|create-policy|update-policy|list-policies|upload-artifact|get-artifact|build|list-builds|get-build|gate|release-gate|evidence|list-evidence|signing-job|list-signing-jobs|get-signing-job|create-integration|list-integrations|update-integration|integration-deliveries|runtime-event|runtime-events|risk-summary|retention|attest|resolve-threat|download-url|download');
+  const options = parseArgs(rest);
+  const config = readConfig();
+  const tenantId = stringOption(options, 'tenant-id') || process.env.SECURSTACK_TENANT_ID;
+
+  if (action === 'create-app') {
+    const result = await createShieldingApp(config, options, tenantId);
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'list-apps') {
+    const result = await getJson(`${config.apiUrl}/v1/shielding/apps`, config.apiKey, tenantHeaders(tenantId));
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'get-app') {
+    const appId = requiredStringOption(options, 'app-id');
+    const result = await getJson(`${config.apiUrl}/v1/shielding/apps/${encodeURIComponent(appId)}`, config.apiKey, tenantHeaders(tenantId));
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'entitlements') {
+    const result = await getJson(`${config.apiUrl}/v1/shielding/entitlements`, config.apiKey, tenantHeaders(tenantId));
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'usage') {
+    const result = await getJson(`${config.apiUrl}/v1/shielding/usage`, config.apiKey, tenantHeaders(tenantId));
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'create-policy') {
+    const result = await createShieldingPolicy(config, options, tenantId);
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'update-policy') {
+    const result = await updateShieldingPolicy(config, options, tenantId);
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'list-policies') {
+    const result = await getJson(`${config.apiUrl}/v1/shielding/policies`, config.apiKey, tenantHeaders(tenantId));
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'upload-artifact') {
+    const result = await uploadShieldingArtifact(config, options, tenantId);
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'get-artifact') {
+    const artifactId = requiredStringOption(options, 'artifact-id');
+    const result = await getJson(`${config.apiUrl}/v1/shielding/artifacts/${encodeURIComponent(artifactId)}`, config.apiKey, tenantHeaders(tenantId));
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'build') {
+    let result = await createShieldingBuild(config, options, tenantId);
+    if (booleanOption(options, 'wait')) {
+      const buildId = extractId(result.build ?? result);
+      if (!buildId) throw new Error('SecurStack API did not return a Shielding build id.');
+      const completedBuild = await waitForShieldingBuild(config, buildId, tenantId, {
+        timeoutMs: numberOption(options, 'timeout-ms') ?? 600_000,
+        pollIntervalMs: numberOption(options, 'poll-interval-ms') ?? 2_500
+      });
+      result = { ...result, build: completedBuild };
+    }
+    if (booleanOption(options, 'gate-check')) {
+      const buildId = extractId(result.build ?? result);
+      if (!buildId) throw new Error('SecurStack API did not return a Shielding build id.');
+      const status = result.build?.status ?? result.status;
+      if (['pending', 'processing'].includes(status)) {
+        throw new Error('Shielding build is not complete. Use --wait with --async before --gate-check.');
+      }
+      const gate = await checkShieldingReleaseGate(config, buildId, tenantId);
+      emitShieldingJson({ ...result, releaseGateCheck: gate }, options);
+      if (gate.exitCode === 1) process.exitCode = 1;
+      return;
+    }
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'list-builds') {
+    const result = await getJson(`${config.apiUrl}/v1/shielding/builds`, config.apiKey, tenantHeaders(tenantId));
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'get-build') {
+    const buildId = requiredStringOption(options, 'build-id');
+    const result = await getJson(`${config.apiUrl}/v1/shielding/builds/${encodeURIComponent(buildId)}`, config.apiKey, tenantHeaders(tenantId));
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'gate') {
+    const buildId = requiredStringOption(options, 'build-id');
+    const gate = await checkShieldingReleaseGate(config, buildId, tenantId);
+    emitShieldingJson(gate, options);
+    if (gate.exitCode === 1) process.exitCode = 1;
+    return;
+  }
+
+  if (action === 'release-gate') {
+    const buildId = requiredStringOption(options, 'build-id');
+    const releaseGate = await getJson(`${config.apiUrl}/v1/shielding/builds/${encodeURIComponent(buildId)}/release-gate`, config.apiKey, tenantHeaders(tenantId));
+    emitShieldingJson(releaseGate, options);
+    return;
+  }
+
+  if (action === 'evidence') {
+    const buildId = requiredStringOption(options, 'build-id');
+    const suffix = booleanOption(options, 'export') ? 'evidence/export' : 'evidence';
+    const evidence = await getJson(`${config.apiUrl}/v1/shielding/builds/${encodeURIComponent(buildId)}/${suffix}`, config.apiKey, tenantHeaders(tenantId));
+    const verificationStatus = shieldingEvidenceVerificationStatus(evidence);
+    if ((stringOption(options, 'format') || 'json') === 'summary') {
+      emitShieldingEvidenceSummary(evidence, options);
+      if (booleanOption(options, 'fail-on-verification') && verificationStatus !== 'passed') process.exitCode = 1;
+      return;
+    }
+    emitShieldingJson(evidence, options);
+    if (booleanOption(options, 'fail-on-verification') && verificationStatus !== 'passed') process.exitCode = 1;
+    return;
+  }
+
+  if (action === 'list-evidence') {
+    const result = await getJson(`${config.apiUrl}/v1/shielding/evidence`, config.apiKey, tenantHeaders(tenantId));
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'signing-job') {
+    const result = await createShieldingSigningJob(config, options, tenantId);
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'list-signing-jobs') {
+    const result = await getJson(`${config.apiUrl}/v1/shielding/signing/jobs`, config.apiKey, tenantHeaders(tenantId));
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'get-signing-job') {
+    const signingJobId = requiredStringOption(options, 'signing-job-id');
+    const result = await getJson(`${config.apiUrl}/v1/shielding/signing/jobs/${encodeURIComponent(signingJobId)}`, config.apiKey, tenantHeaders(tenantId));
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'create-integration') {
+    const result = await createShieldingIntegration(config, options, tenantId);
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'list-integrations') {
+    const result = await getJson(`${config.apiUrl}/v1/shielding/integrations`, config.apiKey, tenantHeaders(tenantId));
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'update-integration') {
+    const result = await updateShieldingIntegration(config, options, tenantId);
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'integration-deliveries') {
+    const result = await getJson(`${config.apiUrl}/v1/shielding/integrations/deliveries`, config.apiKey, tenantHeaders(tenantId));
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'runtime-event') {
+    const event = await createShieldingRuntimeEvent(config, options, tenantId);
+    emitShieldingJson(event, options);
+    return;
+  }
+
+  if (action === 'runtime-events') {
+    const result = await getJson(`${config.apiUrl}/v1/shielding/runtime/events`, config.apiKey, tenantHeaders(tenantId));
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'risk-summary') {
+    const appId = requiredStringOption(options, 'app-id');
+    const result = await getJson(`${config.apiUrl}/v1/shielding/apps/${encodeURIComponent(appId)}/risk-summary`, config.apiKey, tenantHeaders(tenantId));
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'retention') {
+    const result = await runShieldingRetention(config, options, tenantId);
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'attest') {
+    const attestation = await createShieldingAttestation(config, options, tenantId);
+    emitShieldingJson(attestation, options);
+    if (attestation.decision === 'block') process.exitCode = 1;
+    return;
+  }
+
+  if (action === 'resolve-threat') {
+    const result = await resolveShieldingThreat(config, options, tenantId);
+    emitShieldingJson(result, options);
+    return;
+  }
+
+  if (action === 'download-url') {
+    const buildId = requiredStringOption(options, 'build-id');
+    const download = await shieldingDownloadUrl(config, buildId, tenantId);
+    emitShieldingJson(download, options);
+    return;
+  }
+
+  if (action === 'download') {
+    const buildId = requiredStringOption(options, 'build-id');
+    const outputPath = requiredStringOption(options, 'output');
+    const download = await shieldingDownloadUrl(config, buildId, tenantId);
+    await downloadFile(download.downloadUrl, outputPath);
+    emitShieldingJson({
+      buildId,
+      artifactStage: download.artifactStage,
+      outputPath: resolve(outputPath),
+      protectedSha256: download.protectedSha256,
+      signedSha256: download.signedSha256
+    }, options);
+    return;
+  }
+
+  throw new Error(`Unknown shielding action: ${action}`);
+}
+
+export async function createShieldingApp(config, options, tenantId) {
+  const name = requiredStringOption(options, 'name');
+  const platform = requiredStringOption(options, 'platform');
+  const packageName = requiredStringOption(options, 'package-name');
+  const environments = shieldingListOption(options, 'environment', ['staging']);
+  if (!['android', 'ios'].includes(platform)) throw new Error(`Unsupported Shielding platform: ${platform}`);
+  for (const environment of environments) {
+    if (!['dev', 'staging', 'prod'].includes(environment)) throw new Error(`Unsupported Shielding environment: ${environment}`);
+  }
+  return postJson(`${config.apiUrl}/v1/shielding/apps`, config.apiKey, compactObject({
+    name,
+    platform,
+    packageName,
+    projectId: stringOption(options, 'project-id'),
+    environments
+  }), tenantHeaders(tenantId));
+}
+
+export async function createShieldingPolicy(config, options, tenantId) {
+  const name = requiredStringOption(options, 'name');
+  const mode = stringOption(options, 'mode') || 'block';
+  const requiredProtections = shieldingListOption(options, 'required-protection');
+  const optionalProtections = shieldingListOption(options, 'optional-protection');
+  if (!['audit', 'warn', 'block'].includes(mode)) throw new Error(`Unsupported Shielding policy mode: ${mode}`);
+  if (requiredProtections.length === 0) throw new Error('Missing --required-protection <type>');
+  return postJson(`${config.apiUrl}/v1/shielding/policies`, config.apiKey, compactObject({
+    name,
+    appId: stringOption(options, 'app-id'),
+    mode,
+    requiredProtections,
+    optionalProtections: optionalProtections.length > 0 ? optionalProtections : undefined
+  }), tenantHeaders(tenantId));
+}
+
+export async function updateShieldingPolicy(config, options, tenantId) {
+  const policyId = requiredStringOption(options, 'policy-id');
+  const mode = stringOption(options, 'mode');
+  const requiredProtections = options.has('required-protection') ? shieldingListOption(options, 'required-protection') : undefined;
+  const optionalProtections = options.has('optional-protection') ? shieldingListOption(options, 'optional-protection') : undefined;
+  if (mode && !['audit', 'warn', 'block'].includes(mode)) throw new Error(`Unsupported Shielding policy mode: ${mode}`);
+  if (!mode && requiredProtections === undefined && optionalProtections === undefined) {
+    throw new Error('Missing policy update fields. Use --mode, --required-protection or --optional-protection.');
+  }
+  return patchJson(`${config.apiUrl}/v1/shielding/policies/${encodeURIComponent(policyId)}`, config.apiKey, compactObject({
+    mode,
+    requiredProtections,
+    optionalProtections
+  }), tenantHeaders(tenantId));
+}
+
+export async function uploadShieldingArtifact(config, options, tenantId) {
+  const appId = requiredStringOption(options, 'app-id');
+  const filePath = resolve(requiredStringOption(options, 'file'));
+  const artifactType = requiredStringOption(options, 'artifact-type');
+  if (!['apk', 'aab', 'ipa'].includes(artifactType)) throw new Error(`Unsupported Shielding artifact type: ${artifactType}`);
+  if (!existsSync(filePath) || !statSync(filePath).isFile()) throw new Error(`Shielding artifact not found: ${filePath}`);
+  const originalSizeBytes = statSync(filePath).size;
+  if (originalSizeBytes <= 0) throw new Error(`Shielding artifact is empty: ${filePath}`);
+  const originalFileName = stringOption(options, 'file-name') || basename(filePath);
+  const originalSha256 = await hashFile(filePath);
+  const upload = await postJson(`${config.apiUrl}/v1/shielding/apps/${encodeURIComponent(appId)}/artifacts/upload-url`, config.apiKey, {
+    artifactType,
+    originalFileName,
+    originalSizeBytes,
+    contentType: contentTypeForShieldingArtifact(artifactType)
+  }, tenantHeaders(tenantId));
+  await putBinary(upload.uploadUrl, createReadStream(filePath), upload.headers ?? {});
+  const artifact = await postJson(`${config.apiUrl}/v1/shielding/apps/${encodeURIComponent(appId)}/artifacts`, config.apiKey, {
+    artifactType,
+    originalFileName,
+    originalSha256,
+    originalSizeBytes,
+    storageUri: upload.storageUri,
+    versionName: stringOption(options, 'version-name'),
+    versionCode: stringOption(options, 'version-code'),
+    metadata: {
+      uploadedBy: 'securstack-cli',
+      sourcePath: normalizePath(filePath)
+    }
+  }, tenantHeaders(tenantId));
+  return { upload, artifact };
+}
+
+export async function createShieldingBuild(config, options, tenantId) {
+  const appId = requiredStringOption(options, 'app-id');
+  const artifactId = requiredStringOption(options, 'artifact-id');
+  const policyId = requiredStringOption(options, 'policy-id');
+  const environment = stringOption(options, 'environment') || 'prod';
+  const signingMode = stringOption(options, 'signing-mode') || 'customer';
+  if (!['dev', 'staging', 'prod'].includes(environment)) throw new Error(`Unsupported Shielding environment: ${environment}`);
+  if (!['customer', 'managed'].includes(signingMode)) throw new Error(`Unsupported Shielding signing mode: ${signingMode}`);
+  return postJson(`${config.apiUrl}/v1/shielding/builds`, config.apiKey, {
+    appId,
+    artifactId,
+    policyId,
+    environment,
+    signingMode,
+    idempotencyKey: stringOption(options, 'idempotency-key'),
+    asyncMode: booleanOption(options, 'async') || undefined
+  }, tenantHeaders(tenantId));
+}
+
+export async function createShieldingSigningJob(config, options, tenantId) {
+  const buildId = requiredStringOption(options, 'build-id');
+  const mode = stringOption(options, 'mode') || 'customer';
+  if (!['customer', 'managed'].includes(mode)) throw new Error(`Unsupported Shielding signing job mode: ${mode}`);
+  const keyRef = stringOption(options, 'key-ref');
+  const certificateRef = stringOption(options, 'certificate-ref');
+  if (mode === 'customer' && (keyRef || certificateRef)) {
+    throw new Error('Customer Shielding signing must not include --key-ref or --certificate-ref. Sign the protected artifact in your own pipeline.');
+  }
+  if (mode === 'managed' && !keyRef) throw new Error('Managed Shielding signing requires --key-ref <ref>');
+  if (mode === 'managed') {
+    validateManagedSigningReference(keyRef, 'key-ref', tenantId);
+    if (certificateRef) validateManagedSigningReference(certificateRef, 'certificate-ref', tenantId);
+  }
+  return postJson(`${config.apiUrl}/v1/shielding/builds/${encodeURIComponent(buildId)}/signing/jobs`, config.apiKey, compactObject({
+    mode,
+    keyRef,
+    certificateRef
+  }), tenantHeaders(tenantId));
+}
+
+function validateManagedSigningReference(value, field, tenantId) {
+  const reference = String(value || '').trim();
+  const lowercase = reference.toLowerCase();
+  const plaintextSignals = [
+    '-----begin',
+    'private key',
+    'keystore=',
+    'keystorepassword',
+    'provisioning profile',
+    '<key>application-identifier</key>',
+    'p12:',
+    'pkcs12'
+  ];
+  if (plaintextSignals.some((signal) => lowercase.includes(signal))) {
+    throw new Error(`Managed Shielding signing --${field} must be a Vault, KMS or HSM reference, not plaintext signing material.`);
+  }
+  const match = /^(vault|kms|hsm):\/\/([^/\s]+)\/[^\s]+$/i.exec(reference);
+  if (!match) {
+    throw new Error(`Managed Shielding signing --${field} must use vault://, kms:// or hsm:// tenant-scoped references.`);
+  }
+  if (tenantId && match[2] !== tenantId) {
+    throw new Error(`Managed Shielding signing --${field} must be scoped to tenant ${tenantId}.`);
+  }
+}
+
+export async function createShieldingIntegration(config, options, tenantId) {
+  const name = requiredStringOption(options, 'name');
+  const type = requiredStringOption(options, 'type');
+  const endpointUrl = requiredStringOption(options, 'endpoint-url');
+  if (!['generic_webhook', 'splunk_hec'].includes(type)) throw new Error(`Unsupported Shielding integration type: ${type}`);
+  return postJson(`${config.apiUrl}/v1/shielding/integrations`, config.apiKey, compactObject({
+    name,
+    type,
+    endpointUrl,
+    eventTypes: shieldingListOption(options, 'event-type'),
+    headers: shieldingHeaderObject(options),
+    bearerToken: stringOption(options, 'bearer-token'),
+    sharedSecret: stringOption(options, 'shared-secret')
+  }), tenantHeaders(tenantId));
+}
+
+export async function updateShieldingIntegration(config, options, tenantId) {
+  const integrationId = requiredStringOption(options, 'integration-id');
+  return postJson(`${config.apiUrl}/v1/shielding/integrations/${encodeURIComponent(integrationId)}`, config.apiKey, compactObject({
+    enabled: options.has('enabled') ? booleanOption(options, 'enabled') : undefined,
+    endpointUrl: stringOption(options, 'endpoint-url'),
+    eventTypes: options.has('event-type') ? shieldingListOption(options, 'event-type') : undefined,
+    headers: options.has('header') ? shieldingHeaderObject(options) : undefined,
+    bearerToken: stringOption(options, 'bearer-token'),
+    sharedSecret: stringOption(options, 'shared-secret')
+  }), tenantHeaders(tenantId));
+}
+
+export async function createShieldingRuntimeEvent(config, options, tenantId) {
+  const appId = requiredStringOption(options, 'app-id');
+  const platform = requiredStringOption(options, 'platform');
+  const threatType = normalizeShieldingRuntimeThreatType(requiredStringOption(options, 'threat-type'));
+  const severity = requiredStringOption(options, 'severity');
+  if (!['android', 'ios'].includes(platform)) throw new Error(`Unsupported Shielding runtime platform: ${platform}`);
+  if (!['info', 'low', 'medium', 'high', 'critical'].includes(severity)) throw new Error(`Unsupported Shielding runtime severity: ${severity}`);
+  return postJson(`${config.apiUrl}/v1/shielding/runtime/events`, config.apiKey, compactObject({
+    appId,
+    buildId: stringOption(options, 'build-id'),
+    platform,
+    threatType,
+    severity,
+    observedAt: stringOption(options, 'observed-at') || new Date().toISOString(),
+    metadata: jsonObjectOption(options, 'metadata-json')
+  }), tenantHeaders(tenantId));
+}
+
+function normalizeShieldingRuntimeThreatType(value) {
+  const normalized = String(value).trim().toLowerCase().replace(/[-\s]+/g, '_');
+  const threatType = shieldingRuntimeThreatAliases.get(normalized) ?? normalized;
+  if (!shieldingRuntimeThreatTypes.has(threatType)) {
+    throw new Error(`Unsupported Shielding runtime threat type: ${value}. Use one of: ${runtimeThreatTypeSchema.options.join(', ')}`);
+  }
+  return threatType;
+}
+
+export async function runShieldingRetention(config, options, tenantId) {
+  return postJson(`${config.apiUrl}/v1/shielding/retention/run`, config.apiKey, {
+    dryRun: !booleanOption(options, 'execute')
+  }, tenantHeaders(tenantId));
+}
+
+export async function checkShieldingReleaseGate(config, buildId, tenantId) {
+  return getJson(`${config.apiUrl}/v1/shielding/builds/${encodeURIComponent(buildId)}/release-gate/check`, config.apiKey, tenantHeaders(tenantId));
+}
+
+export async function waitForShieldingBuild(config, buildId, tenantId, options) {
+  const startedAt = Date.now();
+  let lastStatus = 'unknown';
+  while (Date.now() - startedAt <= options.timeoutMs) {
+    const build = await getJson(`${config.apiUrl}/v1/shielding/builds/${encodeURIComponent(buildId)}`, config.apiKey, tenantHeaders(tenantId));
+    lastStatus = build.status || lastStatus;
+    if (['protected', 'signed', 'released'].includes(build.status)) return build;
+    if (['failed', 'blocked'].includes(build.status)) {
+      throw new Error(build.failureReason || `SecurStack Shielding build ${buildId} failed with status ${build.status}.`);
+    }
+    await sleep(options.pollIntervalMs);
+  }
+  throw new Error(`SecurStack Shielding build ${buildId} timed out while waiting for completion. Last status: ${lastStatus}.`);
+}
+
+export async function createShieldingAttestation(config, options, tenantId) {
+  const appId = requiredStringOption(options, 'app-id');
+  const platform = requiredStringOption(options, 'platform');
+  if (!['android', 'ios'].includes(platform)) throw new Error(`Unsupported Shielding attestation platform: ${platform}`);
+  const timestamp = stringOption(options, 'timestamp') || new Date().toISOString();
+  const nonce = stringOption(options, 'nonce') || randomUUID();
+  const sessionRisk = decimalOption(options, 'session-risk') ?? 0;
+  if (nonce.length < 8 || nonce.length > 256) throw new Error('Shielding attestation nonce must be between 8 and 256 characters.');
+  if (sessionRisk < 0 || sessionRisk > 10) throw new Error('Shielding attestation session risk must be between 0 and 10.');
+  const signatureVersion = 'ssk-attestation-hmac-v1';
+  const keyId = stringOption(options, 'key-id') || (tenantId ? `${tenantId}-${appId}` : appId);
+  const buildId = stringOption(options, 'build-id');
+  const signedSha256 = stringOption(options, 'signed-sha256');
+  const artifactStage = stringOption(options, 'artifact-stage') || (signedSha256 ? 'signed' : undefined);
+  if (artifactStage && !['protected', 'signed'].includes(artifactStage)) {
+    throw new Error('Shielding attestation artifact stage must be protected or signed.');
+  }
+  if ((artifactStage === 'signed' || signedSha256) && !buildId) {
+    throw new Error('Shielding attestation signed artifact identity requires --build-id.');
+  }
+  if (artifactStage === 'signed' && !signedSha256) {
+    throw new Error('Shielding attestation signed artifact identity requires --signed-sha256.');
+  }
+  if (signedSha256 && artifactStage === 'protected') {
+    throw new Error('Shielding attestation --signed-sha256 requires --artifact-stage signed.');
+  }
+  const payload = {
+    appId,
+    buildId,
+    platform,
+    endpoint: stringOption(options, 'endpoint'),
+    protectedSha256: stringOption(options, 'protected-sha256'),
+    artifactStage,
+    signedSha256,
+    evidenceFingerprint: stringOption(options, 'evidence-fingerprint'),
+    nonce,
+    timestamp,
+    sessionRisk,
+    decision: stringOption(options, 'decision') || 'observe',
+    signatureVersion,
+    keyId
+  };
+  const secret = stringOption(options, 'hmac-secret') || process.env.SHIELDING_ATTESTATION_HMAC_SECRET;
+  if (secret) {
+    payload.signature = `sha256=${createHmac('sha256', secret)
+      .update(canonicalApiAttestationProofString(tenantId, payload))
+      .digest('hex')}`;
+  }
+  return postJson(`${config.apiUrl}/v1/shielding/attestation/events`, config.apiKey, compactObject(payload), tenantHeaders(tenantId));
+}
+
+export async function resolveShieldingThreat(config, options, tenantId) {
+  const code = requiredStringOption(options, 'code');
+  if (!/^SSK-[A-Z0-9]{8}$/.test(code)) throw new Error(`Invalid Shielding threat resolution code: ${code}`);
+  return patchJson(`${config.apiUrl}/v1/shielding/runtime/threat-resolution/${encodeURIComponent(code)}/resolve`, config.apiKey, compactObject({
+    resolvedBy: stringOption(options, 'resolved-by') || process.env.SECURSTACK_ACTOR || process.env.USER,
+    resolutionNote: stringOption(options, 'resolution-note')
+  }), tenantHeaders(tenantId));
+}
+
+function shieldingDownloadUrl(config, buildId, tenantId) {
+  return getJson(`${config.apiUrl}/v1/shielding/builds/${encodeURIComponent(buildId)}/artifact/download-url`, config.apiKey, tenantHeaders(tenantId));
 }
 
 export function installGitHook(repo, policy, command = 'securstack') {
@@ -752,13 +1350,14 @@ export function looksBinary(buffer) {
   return sample.includes(0);
 }
 
-async function postJson(url, apiKey, body) {
+async function postJson(url, apiKey, body, extraHeaders = {}) {
   const response = await fetch(url, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${apiKey}`,
       'content-type': 'application/json',
-      'user-agent': 'securstack-cli/0.1.0'
+      'user-agent': 'securstack-cli/0.1.0',
+      ...extraHeaders
     },
     body: JSON.stringify(body)
   });
@@ -768,6 +1367,40 @@ async function postJson(url, apiKey, body) {
     throw new Error(data.message || data.error || `SecurStack API request failed with HTTP ${response.status}`);
   }
   return data;
+}
+
+async function patchJson(url, apiKey, body, extraHeaders = {}) {
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      'content-type': 'application/json',
+      'user-agent': 'securstack-cli/0.1.0',
+      ...extraHeaders
+    },
+    body: JSON.stringify(body)
+  });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!response.ok) {
+    throw new Error(data.message || `SecurStack API returned ${response.status}`);
+  }
+  return data;
+}
+
+async function putBinary(url, body, extraHeaders = {}) {
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      'user-agent': 'securstack-cli/0.1.0',
+      ...extraHeaders
+    },
+    body
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Shielding artifact upload failed with HTTP ${response.status}`);
+  }
 }
 
 async function postBinary(url, apiKey, body) {
@@ -796,12 +1429,13 @@ async function hashFile(path) {
   return hash.digest('hex');
 }
 
-async function getJson(url, apiKey) {
+async function getJson(url, apiKey, extraHeaders = {}) {
   const response = await fetch(url, {
     method: 'GET',
     headers: {
       authorization: `Bearer ${apiKey}`,
-      'user-agent': 'securstack-cli/0.1.0'
+      'user-agent': 'securstack-cli/0.1.0',
+      ...extraHeaders
     }
   });
   const text = await response.text();
@@ -810,6 +1444,19 @@ async function getJson(url, apiKey) {
     throw new Error(data.message || data.error || `SecurStack API request failed with HTTP ${response.status}`);
   }
   return data;
+}
+
+async function downloadFile(url, outputPath) {
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: { 'user-agent': 'securstack-cli/0.1.0' }
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Shielding artifact download failed with HTTP ${response.status}`);
+  }
+  if (!response.body) throw new Error('Shielding artifact download did not return a response body.');
+  await pipeline(Readable.fromWeb(response.body), createWriteStream(resolve(outputPath), { mode: 0o600 }));
 }
 
 function sleep(ms) {
@@ -877,6 +1524,12 @@ function stringOption(options, key) {
   return options.get(key)?.at(-1);
 }
 
+function requiredStringOption(options, key) {
+  const value = stringOption(options, key);
+  if (!value) throw new Error(`Missing --${key} <value>`);
+  return value;
+}
+
 function booleanOption(options, key) {
   const value = options.get(key)?.at(-1);
   if (value === undefined) return false;
@@ -911,6 +1564,42 @@ function arrayOption(options, key) {
   return options.get(key) || [];
 }
 
+function shieldingListOption(options, key, fallback = []) {
+  const values = arrayOption(options, key)
+    .flatMap((value) => String(value).split(','))
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return values.length > 0 ? [...new Set(values)] : fallback;
+}
+
+function shieldingHeaderObject(options) {
+  const headers = {};
+  for (const rawHeader of arrayOption(options, 'header')) {
+    const separator = String(rawHeader).indexOf(':');
+    if (separator <= 0) throw new Error(`Invalid Shielding integration header: ${rawHeader}`);
+    const key = String(rawHeader).slice(0, separator).trim();
+    const value = String(rawHeader).slice(separator + 1).trim();
+    if (!key || !value) throw new Error(`Invalid Shielding integration header: ${rawHeader}`);
+    headers[key] = value;
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+function jsonObjectOption(options, key) {
+  const value = stringOption(options, key);
+  if (value === undefined) return undefined;
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error(`Invalid JSON option --${key}`);
+  }
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+    throw new Error(`Option --${key} must be a JSON object`);
+  }
+  return parsed;
+}
+
 function stripTrailingSlash(value) {
   return String(value).replace(/\/+$/, '');
 }
@@ -925,6 +1614,69 @@ function emitOutput(value, outputPath) {
     return;
   }
   writeFileSync(resolve(outputPath), `${value}\n`, { mode: 0o600 });
+}
+
+function emitShieldingJson(value, options) {
+  const format = stringOption(options, 'format') || 'json';
+  if (format !== 'json') throw new Error(`Unsupported Shielding output format: ${format}`);
+  emitOutput(JSON.stringify(value, null, 2), stringOption(options, 'output-json'));
+}
+
+function emitShieldingEvidenceSummary(evidence, options) {
+  const evidenceRecord = evidence?.evidence && typeof evidence.evidence === 'object' ? evidence.evidence : evidence;
+  const runtime = evidenceRecord?.runtimePackage && typeof evidenceRecord.runtimePackage === 'object' ? evidenceRecord.runtimePackage : {};
+  const verification = evidenceRecord?.shieldingVerification && typeof evidenceRecord.shieldingVerification === 'object' ? evidenceRecord.shieldingVerification : {};
+  const readiness = verification.commercialReadiness && typeof verification.commercialReadiness === 'object' ? verification.commercialReadiness : {};
+  const blockers = Array.isArray(readiness.blockers) ? readiness.blockers : [];
+  const failedChecks = Array.isArray(verification.checks) ? verification.checks.filter((check) => check?.status === 'failed') : [];
+  const nativeToolchain = runtime.nativeToolchain && typeof runtime.nativeToolchain === 'object' ? runtime.nativeToolchain : {};
+  const canonicalPayloadHash = evidenceRecord?.canonicalPayloadHash ?? evidence?.canonicalPayloadHash;
+  const evidenceFingerprint = evidenceRecord?.evidenceFingerprint ?? evidence?.evidenceFingerprint;
+  const lines = [
+    `SecurStack Shielding evidence ${evidenceRecord?.id ?? '-'}`,
+    `Build: ${evidenceRecord?.buildId ?? evidence?.buildId ?? '-'} · gate ${evidenceRecord?.releaseGateDecision ?? '-'} · verification ${verification.status ?? '-'}`,
+    `Protected SHA-256: ${evidenceRecord?.protectedSha256 ?? '-'}`,
+    `Evidence fingerprint: ${evidenceFingerprint ?? '-'}`,
+    canonicalPayloadHash ? `Canonical payload SHA-256: ${canonicalPayloadHash}` : undefined,
+    `Commercial readiness: ${readiness.status ?? '-'} · blockers ${blockers.length}`,
+    `Native probes: ${runtime.nativeProbeManifestSha256 && runtime.nativeProbeBindingSha256 ? 'bound' : 'missing'} · manifest ${shortSha(runtime.nativeProbeManifestSha256)} · binding ${shortSha(runtime.nativeProbeBindingSha256)}`,
+    `Native toolchain: ${nativeToolchain.selected ?? '-'}${nativeToolchain.strict ? ' strict' : ''}${nativeToolchain.compilerId ? ` · ${nativeToolchain.compilerId}` : ''}`,
+    runtime.androidDexMergeStatus ? `Android runtime: ${runtime.androidDexMergeStatus}${runtime.androidSecondaryDexSha256 ? ` · secondary DEX ${shortSha(runtime.androidSecondaryDexSha256)}` : ''}` : undefined,
+    runtime.iosLaunchBridgeStatus ? `iOS runtime: ${runtime.iosLaunchBridgeStatus}${runtime.iosLaunchBindingSha256 ? ` · launch binding ${shortSha(runtime.iosLaunchBindingSha256)}` : ''}` : undefined,
+    failedChecks.length > 0 ? `Verification failures: ${failedChecks.slice(0, 3).map((check) => check.message ?? check.id ?? 'failed check').join(' | ')}` : undefined,
+    blockers.length > 0 ? `Readiness blockers: ${blockers.slice(0, 3).map((blocker) => blocker.message ?? blocker.id ?? 'blocker').join(' | ')}` : undefined
+  ].filter(Boolean);
+  emitOutput(lines.join('\n'), stringOption(options, 'output-json'));
+}
+
+function shieldingEvidenceVerificationStatus(evidence) {
+  const evidenceRecord = evidence?.evidence && typeof evidence.evidence === 'object' ? evidence.evidence : evidence;
+  const verification = evidenceRecord?.shieldingVerification && typeof evidenceRecord.shieldingVerification === 'object' ? evidenceRecord.shieldingVerification : {};
+  return typeof verification.status === 'string' ? verification.status : undefined;
+}
+
+function shortSha(value) {
+  return typeof value === 'string' && value.length > 16 ? `${value.slice(0, 8)}...${value.slice(-6)}` : value ?? '-';
+}
+
+function tenantHeaders(tenantId) {
+  return tenantId ? { 'x-tenant-id': tenantId } : {};
+}
+
+function compactObject(value) {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined));
+}
+
+function contentTypeForShieldingArtifact(artifactType) {
+  if (artifactType === 'apk') return 'application/vnd.android.package-archive';
+  if (artifactType === 'aab') return 'application/octet-stream';
+  if (artifactType === 'ipa') return 'application/octet-stream';
+  return 'application/octet-stream';
+}
+
+function extractId(value) {
+  if (!value || typeof value !== 'object') return undefined;
+  return value.id || value._id;
 }
 
 function escapeRegex(value) {
