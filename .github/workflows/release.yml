@@ -58,7 +58,6 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     env:
-      DOWNLOADS_BUCKET: ${{ secrets.SECURSTACK_DOWNLOADS_BUCKET }}
       SECURSTACK_NPM_TOKEN: ${{ secrets.SECURSTACK_NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v4
@@ -96,25 +95,54 @@ jobs:
           cp install/install.sh install/install.ps1 dist/release/
           (cd dist/packages/npm && npm pack --pack-destination ../../release)
           tar -C dist/packages -czf "dist/release/securstack-package-metadata-${version}.tar.gz" .
-      - name: Publish canonical download directory
+      - name: Publish canonical download directory on the production server
         working-directory: securstack-cli
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.SECURSTACK_DOWNLOADS_AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.SECURSTACK_DOWNLOADS_AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: ${{ secrets.SECURSTACK_DOWNLOADS_AWS_REGION }}
+          DOWNLOADS_SSH_HOST: ${{ secrets.SECURSTACK_DOWNLOADS_SSH_HOST }}
+          DOWNLOADS_SSH_PORT: ${{ secrets.SECURSTACK_DOWNLOADS_SSH_PORT }}
+          DOWNLOADS_SSH_USER: ${{ secrets.SECURSTACK_DOWNLOADS_SSH_USER }}
+          DOWNLOADS_SSH_PRIVATE_KEY: ${{ secrets.SECURSTACK_DOWNLOADS_SSH_PRIVATE_KEY }}
+          DOWNLOADS_SSH_KNOWN_HOSTS: ${{ secrets.SECURSTACK_DOWNLOADS_SSH_KNOWN_HOSTS }}
+          DOWNLOADS_PATH: ${{ secrets.SECURSTACK_DOWNLOADS_PATH }}
         run: |
+          set -euo pipefail
           version="$(node -p "require('./package.json').version")"
-          aws s3 sync dist/release "s3://${DOWNLOADS_BUCKET}/cli/v${version}/" --delete
-          aws s3 cp dist/release/latest.txt "s3://${DOWNLOADS_BUCKET}/cli/latest.txt" --cache-control no-cache
-          aws s3 cp dist/release/install.sh "s3://${DOWNLOADS_BUCKET}/cli/install.sh" --cache-control no-cache --content-type text/x-shellscript
-          aws s3 cp dist/release/install.ps1 "s3://${DOWNLOADS_BUCKET}/cli/install.ps1" --cache-control no-cache --content-type text/plain
+          port="${DOWNLOADS_SSH_PORT:-22}"
+          remote_path="${DOWNLOADS_PATH:-/srv/securstack/downloads}"
+          test -n "$DOWNLOADS_SSH_HOST"
+          test -n "$DOWNLOADS_SSH_USER"
+          test -n "$DOWNLOADS_SSH_PRIVATE_KEY"
+          test -n "$DOWNLOADS_SSH_KNOWN_HOSTS"
+          [[ "$port" =~ ^[0-9]+$ ]]
+          [[ "$DOWNLOADS_SSH_USER" =~ ^[A-Za-z0-9._-]+$ ]]
+          [[ "$remote_path" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          test "$remote_path" != "/"
+
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$DOWNLOADS_SSH_PRIVATE_KEY" > "$HOME/.ssh/securstack_downloads"
+          chmod 600 "$HOME/.ssh/securstack_downloads"
+          printf '%s\n' "$DOWNLOADS_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+          archive="securstack-cli-v${version}-${GITHUB_RUN_ID}.tar.gz"
+          tar -C dist/release -czf "/tmp/${archive}" .
+          ssh_args=(-i "$HOME/.ssh/securstack_downloads" -p "$port" -o BatchMode=yes -o StrictHostKeyChecking=yes)
+          scp -i "$HOME/.ssh/securstack_downloads" -P "$port" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "/tmp/${archive}" "${DOWNLOADS_SSH_USER}@${DOWNLOADS_SSH_HOST}:${remote_path}/${archive}"
+          ssh "${ssh_args[@]}" "${DOWNLOADS_SSH_USER}@${DOWNLOADS_SSH_HOST}" \
+            "set -eu; base='${remote_path}'; version='${version}'; archive='${archive}'; target=\"\$base/cli/v\$version\"; staging=\"\$base/.cli-v\$version-${GITHUB_RUN_ID}\"; test ! -e \"\$target\"; rm -rf \"\$staging\"; mkdir -p \"\$staging\" \"\$base/cli\"; tar -xzf \"\$base/\$archive\" -C \"\$staging\"; mv \"\$staging\" \"\$target\"; cp \"\$target/latest.txt\" \"\$base/cli/latest.txt\"; cp \"\$target/install.sh\" \"\$base/cli/install.sh\"; cp \"\$target/install.ps1\" \"\$base/cli/install.ps1\"; rm -f \"\$base/\$archive\""
+          rm -f "/tmp/${archive}" "$HOME/.ssh/securstack_downloads"
+
+          test "$(curl --fail --silent --show-error https://downloads.securstack.io/cli/latest.txt)" = "$version"
+          curl --fail --silent --show-error --head \
+            "https://downloads.securstack.io/cli/v${version}/manifest.json" >/dev/null
       - name: Publish GitHub release
         working-directory: securstack-cli
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "${GITHUB_REF_NAME}" dist/release/* --generate-notes --verify-tag
       - name: Publish npm compatibility installer when configured
-        if: ${{ env.SECURSTACK_NPM_TOKEN != '' && env.DOWNLOADS_BUCKET != '' }}
+        if: ${{ env.SECURSTACK_NPM_TOKEN != '' }}
         working-directory: securstack-cli/dist/packages/npm
         run: |
           npm config set //registry.npmjs.org/:_authToken "$SECURSTACK_NPM_TOKEN"
