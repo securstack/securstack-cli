@@ -1,0 +1,9 @@
+Package: securstack
+Version: __VERSION__
+Section: devel
+Priority: optional
+Architecture: __ARCHITECTURE__
+Maintainer: SecurStack <support@securstack.io>
+Homepage: https://securstack.io
+Description: SecurStack CLI
+ Local client for SecurStack repository scans, CI/CD and Shielding workflows.

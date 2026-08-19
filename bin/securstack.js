@@ -9,9 +9,10 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { once } from 'node:events';
 import { createGzip } from 'node:zlib';
-import { canonicalApiAttestationProofString, runtimeThreatTypeSchema } from '@securstack/core/v1';
+import { canonicalApiAttestationProofString, runtimeThreatTypes } from '@securstack/core/shielding-attestation';
 
 export const defaultApiUrl = 'https://api.securstack.io/api';
+export const cliVersion = '0.2.0';
 const configDir = join(homedir(), '.securstack');
 const configPath = join(configDir, 'config.json');
 const defaultIgnoreDirs = new Set(['.git', 'node_modules', 'dist', 'build', 'coverage', '.next', '.turbo', '.cache', '.idea', '.vscode-test']);
@@ -37,9 +38,10 @@ const shieldingRuntimeThreatAliases = new Map([
   ['api_attestation', 'api_attestation_invalid'],
   ['session_integrity', 'session_integrity_invalid']
 ]);
-const shieldingRuntimeThreatTypes = new Set(runtimeThreatTypeSchema.options);
+const shieldingRuntimeThreatTypes = new Set(runtimeThreatTypes);
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+const bundledExecutable = typeof __SECURSTACK_BUNDLED__ !== 'undefined' && __SECURSTACK_BUNDLED__;
+if (!bundledExecutable && process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
     console.error(error.message || String(error));
     process.exit(1);
@@ -48,6 +50,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 
 export async function main(argv = process.argv.slice(2)) {
   const [command, ...args] = argv;
+  if (command === '--version' || command === '-v' || command === 'version') {
+    console.log(cliVersion);
+    return;
+  }
   if (!command || command === '--help' || command === '-h') {
     printHelp();
     return;
@@ -918,7 +924,7 @@ function normalizeShieldingRuntimeThreatType(value) {
   const normalized = String(value).trim().toLowerCase().replace(/[-\s]+/g, '_');
   const threatType = shieldingRuntimeThreatAliases.get(normalized) ?? normalized;
   if (!shieldingRuntimeThreatTypes.has(threatType)) {
-    throw new Error(`Unsupported Shielding runtime threat type: ${value}. Use one of: ${runtimeThreatTypeSchema.options.join(', ')}`);
+    throw new Error(`Unsupported Shielding runtime threat type: ${value}. Use one of: ${runtimeThreatTypes.join(', ')}`);
   }
   return threatType;
 }

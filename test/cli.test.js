@@ -5,7 +5,7 @@ import { createHmac, generateKeyPairSync } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canonicalApiAttestationProofString } from '@securstack/core/v1';
+import { canonicalApiAttestationProofString } from '@securstack/core/shielding-attestation';
 import {
   collectFiles,
   createPackageArchive,

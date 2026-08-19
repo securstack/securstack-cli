@@ -184,14 +184,37 @@ fixtures/private-data.json
 
 Negations with `!` are not applied in this version.
 
-## Release
+## Distribution
 
-The package exposes the `securstack` binary through `package.json#bin`. The initial recommended distribution path is private or public npm:
+The canonical release is a standalone executable and does not require Node.js
+on the destination machine. Release tags build macOS, Linux and Windows
+artifacts, plus `manifest.json` and `checksums.txt` for integrity verification.
+
+Manual installation:
 
 ```bash
-npm pack
-npm publish
+curl -fsSL https://downloads.securstack.io/cli/install.sh | sh
 ```
+
+Windows PowerShell:
+
+```powershell
+irm https://downloads.securstack.io/cli/install.ps1 | iex
+```
+
+The same immutable binaries are consumed by the managed IDE/plugin installer,
+Homebrew, APT, WinGet, Chocolatey and the optional npm compatibility wrapper.
+Package-manager metadata must reference a versioned URL and SHA-256 value.
+
+For a local platform build:
+
+```bash
+npm run build:binary
+npm run release:manifest
+```
+
+Release templates and operational details live in `packaging/` and in
+`securstack-infra/docs/cli-binary-distribution.md`.
 
 ## Expected Consumers
 
