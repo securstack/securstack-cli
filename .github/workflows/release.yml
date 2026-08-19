@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 permissions:
   contents: write
 
@@ -140,7 +141,14 @@ jobs:
         working-directory: securstack-cli
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" dist/release/* --generate-notes --verify-tag
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          tag="v${version}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists" >&2
+            exit 1
+          fi
+          gh release create "$tag" dist/release/* --generate-notes --target "${GITHUB_SHA}"
       - name: Publish npm compatibility installer when configured
         if: ${{ env.SECURSTACK_NPM_TOKEN != '' }}
         working-directory: securstack-cli/dist/packages/npm
