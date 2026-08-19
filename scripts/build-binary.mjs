@@ -61,9 +61,9 @@ if (platform === 'darwin') {
   spawnSync('codesign', ['--remove-signature', output], { stdio: 'ignore' });
 }
 
+const postjectCli = join(root, 'node_modules', 'postject', 'dist', 'cli.js');
 const postjectArgs = [
-  '--no-install',
-  'postject',
+  postjectCli,
   output,
   'NODE_SEA_BLOB',
   blob,
@@ -71,7 +71,7 @@ const postjectArgs = [
   'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2'
 ];
 if (platform === 'darwin') postjectArgs.push('--macho-segment-name', 'NODE_SEA');
-execFileSync(platform === 'windows' ? 'npx.cmd' : 'npx', postjectArgs, { stdio: 'inherit' });
+execFileSync(process.execPath, postjectArgs, { stdio: 'inherit' });
 
 if (platform === 'darwin') {
   execFileSync('codesign', ['--sign', '-', output], { stdio: 'inherit' });
