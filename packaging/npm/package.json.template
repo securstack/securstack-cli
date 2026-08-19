@@ -1,0 +1,10 @@
+{
+  "name": "@securstack/cli",
+  "version": "__VERSION__",
+  "description": "Installer wrapper for the standalone SecurStack CLI binary.",
+  "bin": { "securstack": "bin/securstack.js" },
+  "scripts": { "postinstall": "node install.js" },
+  "files": ["bin", "install.js"],
+  "engines": { "node": ">=20" },
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" }
+}

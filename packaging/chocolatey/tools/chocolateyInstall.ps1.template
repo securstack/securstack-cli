@@ -1,0 +1,8 @@
+$ErrorActionPreference = 'Stop'
+$packageArgs = @{
+  packageName    = 'securstack'
+  url64bit       = '__WINDOWS_X64_URL__'
+  checksum64     = '__WINDOWS_X64_SHA256__'
+  checksumType64 = 'sha256'
+}
+Get-ChocolateyWebFile @packageArgs -FileFullPath (Join-Path $toolsDir 'securstack.exe')

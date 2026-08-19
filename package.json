@@ -1,0 +1,29 @@
+{
+  "name": "@securstack/cli",
+  "version": "0.2.0",
+  "description": "Local SecurStack CLI for repository scans, CI/CD workflows, and Shielding operations.",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "securstack": "./bin/securstack.js"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node ./bin/securstack.js",
+    "test": "node --test",
+    "build:binary": "node ./scripts/build-binary.mjs",
+    "release:manifest": "node ./scripts/generate-release-manifest.mjs",
+    "release:packages": "node ./scripts/render-distribution.mjs"
+  },
+  "devDependencies": {
+    "@securstack/core": "file:../securstack-core",
+    "esbuild": "^0.25.12",
+    "postject": "^1.0.0-alpha.6"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
