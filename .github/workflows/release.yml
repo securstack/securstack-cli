@@ -113,6 +113,8 @@ jobs:
           (cd dist/packages/npm && npm pack --pack-destination ../../release)
           tar -C dist/packages -czf "dist/release/securstack-package-metadata-${version}.tar.gz" .
       - name: Publish canonical download directory on the production server
+        continue-on-error: true
+        timeout-minutes: 4
         working-directory: securstack-cli
         env:
           DOWNLOADS_SSH_HOST: ${{ secrets.SECURSTACK_DOWNLOADS_SSH_HOST }}
