@@ -34,8 +34,16 @@ jobs:
         env:
           BITBUCKET_API_TOKEN: ${{ secrets.SECURSTACK_BITBUCKET_API_TOKEN }}
         run: |
-          auth="$(printf 'x-bitbucket-api-token-auth:%s' "$BITBUCKET_API_TOKEN" | base64)"
-          git -c http.extraheader="Authorization: Basic $auth" clone https://bitbucket.org/securstack/securstack-core.git securstack-core
+          askpass="$(mktemp)"
+          printf '%s\n' '#!/bin/sh' \
+            'case "$1" in' \
+            '*Username*) printf "%s\\n" "x-bitbucket-api-token-auth" ;;' \
+            '*Password*) printf "%s\\n" "$BITBUCKET_API_TOKEN" ;;' \
+            'esac' > "$askpass"
+          chmod 700 "$askpass"
+          GIT_TERMINAL_PROMPT=0 GIT_ASKPASS="$askpass" \
+            git clone https://x-bitbucket-api-token-auth@bitbucket.org/securstack/securstack-core.git securstack-core
+          rm -f "$askpass"
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -68,8 +76,16 @@ jobs:
         env:
           BITBUCKET_API_TOKEN: ${{ secrets.SECURSTACK_BITBUCKET_API_TOKEN }}
         run: |
-          auth="$(printf 'x-bitbucket-api-token-auth:%s' "$BITBUCKET_API_TOKEN" | base64)"
-          git -c http.extraheader="Authorization: Basic $auth" clone https://bitbucket.org/securstack/securstack-core.git securstack-core
+          askpass="$(mktemp)"
+          printf '%s\n' '#!/bin/sh' \
+            'case "$1" in' \
+            '*Username*) printf "%s\\n" "x-bitbucket-api-token-auth" ;;' \
+            '*Password*) printf "%s\\n" "$BITBUCKET_API_TOKEN" ;;' \
+            'esac' > "$askpass"
+          chmod 700 "$askpass"
+          GIT_TERMINAL_PROMPT=0 GIT_ASKPASS="$askpass" \
+            git clone https://x-bitbucket-api-token-auth@bitbucket.org/securstack/securstack-core.git securstack-core
+          rm -f "$askpass"
       - uses: actions/setup-node@v4
         with:
           node-version: 24
