@@ -1,16 +1,6 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.12.0.schema.json
 PackageIdentifier: SecurStack.CLI
 PackageVersion: __VERSION__
-PackageLocale: en-US
-Publisher: SecurStack
-PackageName: SecurStack CLI
-License: Proprietary
-ShortDescription: SecurStack CLI for repository security scans and Shielding workflows.
-InstallerType: portable
-Installers:
-  - Architecture: x64
-    InstallerUrl: __WINDOWS_X64_URL__
-    InstallerSha256: __WINDOWS_X64_SHA256__
-    Commands:
-      - securstack
-ManifestType: singleton
-ManifestVersion: 1.6.0
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.12.0

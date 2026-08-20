@@ -6,7 +6,8 @@
     <title>SecurStack CLI</title>
     <authors>SecurStack</authors>
     <projectUrl>https://securstack.io</projectUrl>
-    <licenseUrl>https://securstack.io/terms</licenseUrl>
+    <packageSourceUrl>https://github.com/securstack/securstack-cli</packageSourceUrl>
+    <licenseUrl>https://securstack.io/legal/terms</licenseUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <description>SecurStack CLI for repository security scans and Shielding workflows.</description>
     <tags>securstack security devsecops cli</tags>

@@ -18,9 +18,11 @@ renderRequired('packaging/homebrew/securstack.rb.template', 'homebrew/securstack
   'DARWIN_ARM64_URL', 'DARWIN_ARM64_SHA256', 'DARWIN_X64_URL', 'DARWIN_X64_SHA256',
   'LINUX_ARM64_URL', 'LINUX_ARM64_SHA256', 'LINUX_X64_URL', 'LINUX_X64_SHA256'
 ]);
-renderRequired('packaging/winget/SecurStack.CLI.yaml.template', `winget/SecurStack.CLI-${manifest.version}.yaml`, [
+renderRequired('packaging/winget/SecurStack.CLI.installer.yaml.template', 'winget/SecurStack.CLI.installer.yaml', [
   'WINDOWS_X64_URL', 'WINDOWS_X64_SHA256'
 ]);
+renderRequired('packaging/winget/SecurStack.CLI.locale.en-US.yaml.template', 'winget/SecurStack.CLI.locale.en-US.yaml', []);
+renderRequired('packaging/winget/SecurStack.CLI.yaml.template', 'winget/SecurStack.CLI.yaml', []);
 renderRequired('packaging/chocolatey/securstack.nuspec.template', 'chocolatey/securstack.nuspec', []);
 renderRequired('packaging/chocolatey/tools/chocolateyInstall.ps1.template', 'chocolatey/tools/chocolateyInstall.ps1', [
   'WINDOWS_X64_URL', 'WINDOWS_X64_SHA256'
