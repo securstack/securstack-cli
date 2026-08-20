@@ -1,0 +1,86 @@
+name: Publish Chocolatey package
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "CLI version to publish, without the leading v. Defaults to package.json."
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CHOCOLATEY_API_KEY: ${{ secrets.SECURSTACK_CHOCOLATEY_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        run: |
+          $version = '${{ inputs.version }}'
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            $version = node -p "require('./package.json').version"
+          }
+          $version = $version.Trim()
+          if ($version.StartsWith('v')) {
+            $version = $version.Substring(1)
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
+            throw "Invalid version '$version'"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
+
+      - name: Download rendered package metadata
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $tag = '${{ steps.version.outputs.tag }}'
+          New-Item -ItemType Directory -Force dist | Out-Null
+          gh release download $tag `
+            --pattern "securstack-package-metadata-$version.tar.gz" `
+            --dir dist
+          New-Item -ItemType Directory -Force dist/packages | Out-Null
+          tar -xzf "dist/securstack-package-metadata-$version.tar.gz" -C dist/packages
+          if (!(Test-Path dist/packages/chocolatey/securstack.nuspec)) {
+            throw "Rendered Chocolatey nuspec was not found."
+          }
+          if (!(Test-Path dist/packages/chocolatey/tools/chocolateyInstall.ps1)) {
+            throw "Rendered Chocolatey install script was not found."
+          }
+
+      - name: Pack Chocolatey package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/chocolatey | Out-Null
+          choco pack dist/packages/chocolatey/securstack.nuspec --out dist/chocolatey
+          if (!(Test-Path "dist/chocolatey/securstack.${{ steps.version.outputs.version }}.nupkg")) {
+            throw "Chocolatey package was not created."
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: securstack-chocolatey-${{ steps.version.outputs.version }}
+          path: dist/chocolatey/*.nupkg
+          if-no-files-found: error
+
+      - name: Publish to Chocolatey Community Repository
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CHOCOLATEY_API_KEY)) {
+            throw "SECURSTACK_CHOCOLATEY_API_KEY is required to publish."
+          }
+          $version = '${{ steps.version.outputs.version }}'
+          $package = "dist/chocolatey/securstack.$version.nupkg"
+          choco push $package --source https://push.chocolatey.org/ --api-key "$env:CHOCOLATEY_API_KEY"
