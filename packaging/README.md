@@ -7,7 +7,9 @@ SHA-256 value; it must never point directly at `latest`.
 
 - Homebrew: publish the rendered formula to `securstack/homebrew-tap`.
 - Debian/Ubuntu: build `.deb` files with `scripts/package-deb.sh`, then publish
-  them through the signed `downloads.securstack.io/apt` repository.
+  them through the signed `downloads.securstack.io/apt` repository. Publish
+  `packaging/debian/install-apt.sh` as `/apt/install.sh` for the short bootstrap
+  command shown on the downloads page.
 - WinGet: submit the three rendered manifests under
   `microsoft/winget-pkgs/manifests/s/SecurStack/CLI/<version>/`. The community
   repository does not accept singleton manifests.
