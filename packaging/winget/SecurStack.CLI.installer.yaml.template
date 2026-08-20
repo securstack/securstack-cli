@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
+PackageIdentifier: SecurStack.CLI
+PackageVersion: __VERSION__
+InstallerType: portable
+Commands:
+  - securstack
+Installers:
+  - Architecture: x64
+    InstallerUrl: __WINDOWS_X64_URL__
+    InstallerSha256: __WINDOWS_X64_SHA256__
+ManifestType: installer
+ManifestVersion: 1.12.0
