@@ -10,6 +10,10 @@ SHA-256 value; it must never point directly at `latest`.
   them through the signed `downloads.securstack.io/apt` repository. Publish
   `packaging/debian/install-apt.sh` as `/apt/install.sh` for the short bootstrap
   command shown on the downloads page.
+- RPM/YUM/DNF: build `.rpm` files with `scripts/package-rpm.sh`, then publish
+  them under `downloads.securstack.io/rpm/stable/$basearch` with `createrepo_c`
+  metadata. Publish `packaging/rpm/install-yum.sh` as `/rpm/install.sh` for the
+  short bootstrap command shown on the downloads page.
 - WinGet: submit the three rendered manifests under
   `microsoft/winget-pkgs/manifests/s/SecurStack/CLI/<version>/`. The community
   repository does not accept singleton manifests.

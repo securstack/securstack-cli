@@ -99,6 +99,8 @@ jobs:
       - name: Generate checksums, package-manager metadata and Debian packages
         working-directory: securstack-cli
         run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
           npm ci
           node scripts/generate-release-manifest.mjs dist/release
           node scripts/render-distribution.mjs dist/release/manifest.json dist/packages
@@ -109,7 +111,10 @@ jobs:
           fi
           ./scripts/package-deb.sh dist/release/securstack-linux-x64 "$version" dist/release
           ./scripts/package-deb.sh dist/release/securstack-linux-arm64 "$version" dist/release
+          ./scripts/package-rpm.sh dist/release/securstack-linux-x64 "$version" dist/release
+          ./scripts/package-rpm.sh dist/release/securstack-linux-arm64 "$version" dist/release
           cp install/install.sh install/install.ps1 dist/release/
+          cp packaging/rpm/install-yum.sh dist/release/
           (cd dist/packages/npm && npm pack --pack-destination ../../release)
           tar -C dist/packages -czf "dist/release/securstack-package-metadata-${version}.tar.gz" .
       - name: Publish canonical download directory on the production server
@@ -149,12 +154,14 @@ jobs:
           scp -i "$HOME/.ssh/securstack_downloads" -P "$port" -o BatchMode=yes -o StrictHostKeyChecking=yes \
             "/tmp/${archive}" "${DOWNLOADS_SSH_USER}@${DOWNLOADS_SSH_HOST}:${remote_path}/${archive}"
           ssh "${ssh_args[@]}" "${DOWNLOADS_SSH_USER}@${DOWNLOADS_SSH_HOST}" \
-            "set -eu; base='${remote_path}'; version='${version}'; archive='${archive}'; target=\"\$base/cli/v\$version\"; staging=\"\$base/.cli-v\$version-${GITHUB_RUN_ID}\"; test ! -e \"\$target\"; rm -rf \"\$staging\"; mkdir -p \"\$staging\" \"\$base/cli\"; tar -xzf \"\$base/\$archive\" -C \"\$staging\"; mv \"\$staging\" \"\$target\"; cp \"\$target/latest.txt\" \"\$base/cli/latest.txt\"; cp \"\$target/install.sh\" \"\$base/cli/install.sh\"; cp \"\$target/install.ps1\" \"\$base/cli/install.ps1\"; rm -f \"\$base/\$archive\""
+            "set -eu; base='${remote_path}'; version='${version}'; archive='${archive}'; target=\"\$base/cli/v\$version\"; staging=\"\$base/.cli-v\$version-${GITHUB_RUN_ID}\"; test ! -e \"\$target\"; rm -rf \"\$staging\"; mkdir -p \"\$staging\" \"\$base/cli\" \"\$base/rpm/stable/x86_64\" \"\$base/rpm/stable/aarch64\"; tar -xzf \"\$base/\$archive\" -C \"\$staging\"; mv \"\$staging\" \"\$target\"; cp \"\$target/latest.txt\" \"\$base/cli/latest.txt\"; cp \"\$target/install.sh\" \"\$base/cli/install.sh\"; cp \"\$target/install.ps1\" \"\$base/cli/install.ps1\"; cp \"\$target/install-yum.sh\" \"\$base/rpm/install.sh\"; cp \"\$target\"/securstack-*-1.x86_64.rpm \"\$base/rpm/stable/x86_64/\"; cp \"\$target\"/securstack-*-1.aarch64.rpm \"\$base/rpm/stable/aarch64/\"; if command -v createrepo_c >/dev/null 2>&1; then createrepo_c --update \"\$base/rpm/stable/x86_64\" && createrepo_c --update \"\$base/rpm/stable/aarch64\"; elif command -v createrepo >/dev/null 2>&1; then createrepo --update \"\$base/rpm/stable/x86_64\" && createrepo --update \"\$base/rpm/stable/aarch64\"; else echo 'Warning: createrepo_c not available; RPM files copied without repository metadata' >&2; fi; rm -f \"\$base/\$archive\""
           rm -f "/tmp/${archive}" "$HOME/.ssh/securstack_downloads"
 
           test "$(curl --fail --silent --show-error https://downloads.securstack.io/cli/latest.txt)" = "$version"
           curl --fail --silent --show-error --head \
             "https://downloads.securstack.io/cli/v${version}/manifest.json" >/dev/null
+          curl --fail --silent --show-error --head \
+            "https://downloads.securstack.io/rpm/install.sh" >/dev/null
       - name: Publish GitHub release
         working-directory: securstack-cli
         env:

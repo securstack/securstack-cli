@@ -1,0 +1,29 @@
+Name: securstack
+Version: __VERSION__
+Release: 1
+Summary: SecurStack CLI
+License: Proprietary
+URL: https://securstack.io
+Vendor: SecurStack
+Packager: SecurStack <support@securstack.io>
+AutoReqProv: no
+
+%global debug_package %{nil}
+%global __os_install_post %{nil}
+
+%description
+Local client for SecurStack repository scans, CI/CD and Shielding workflows.
+
+%prep
+
+%build
+
+%install
+install -D -m 0755 %{_sourcedir}/securstack %{buildroot}%{_bindir}/securstack
+
+%files
+%{_bindir}/securstack
+
+%changelog
+* Wed Aug 19 2026 SecurStack <support@securstack.io> - __VERSION__-1
+- Initial RPM package for the standalone SecurStack CLI.
