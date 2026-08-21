@@ -111,8 +111,8 @@ jobs:
           fi
           ./scripts/package-deb.sh dist/release/securstack-linux-x64 "$version" dist/release
           ./scripts/package-deb.sh dist/release/securstack-linux-arm64 "$version" dist/release
-          ./scripts/package-rpm.sh dist/release/securstack-linux-x64 "$version" dist/release
-          ./scripts/package-rpm.sh dist/release/securstack-linux-arm64 "$version" dist/release
+          sh ./scripts/package-rpm.sh dist/release/securstack-linux-x64 "$version" dist/release
+          sh ./scripts/package-rpm.sh dist/release/securstack-linux-arm64 "$version" dist/release
           cp install/install.sh install/install.ps1 dist/release/
           cp packaging/rpm/install-yum.sh dist/release/
           (cd dist/packages/npm && npm pack --pack-destination ../../release)
