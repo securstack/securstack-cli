@@ -1,0 +1,114 @@
+name: Publish package manager metadata
+
+on:
+  workflow_run:
+    workflows:
+      - Release standalone CLI
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "CLI version to publish, without the leading v. Defaults to package.json."
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish-homebrew:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      SECURSTACK_GITHUB_AUTOMATION_TOKEN: ${{ secrets.SECURSTACK_GITHUB_AUTOMATION_TOKEN }}
+      SECURSTACK_HOMEBREW_TAP_REPOSITORY: ${{ vars.SECURSTACK_HOMEBREW_TAP_REPOSITORY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          if [ -z "$version" ]; then
+            version="$(node -p "require('./package.json').version")"
+          fi
+          version="${version#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid version: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Download rendered package metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          tag="${{ steps.version.outputs.tag }}"
+          mkdir -p dist
+          gh release download "$tag" \
+            --pattern "securstack-package-metadata-$version.tar.gz" \
+            --dir dist
+          mkdir -p dist/packages
+          tar -xzf "dist/securstack-package-metadata-$version.tar.gz" -C dist/packages
+          test -f dist/packages/homebrew/securstack.rb
+
+      - name: Publish Homebrew tap formula
+        run: node scripts/publish-homebrew-tap.mjs dist/packages
+
+  publish-winget:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      SECURSTACK_GITHUB_AUTOMATION_TOKEN: ${{ secrets.SECURSTACK_GITHUB_AUTOMATION_TOKEN }}
+      SECURSTACK_WINGET_FORK_REPOSITORY: ${{ vars.SECURSTACK_WINGET_FORK_REPOSITORY }}
+      SECURSTACK_WINGET_UPSTREAM_REPOSITORY: ${{ vars.SECURSTACK_WINGET_UPSTREAM_REPOSITORY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          if [ -z "$version" ]; then
+            version="$(node -p "require('./package.json').version")"
+          fi
+          version="${version#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid version: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Download rendered package metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          tag="${{ steps.version.outputs.tag }}"
+          mkdir -p dist
+          gh release download "$tag" \
+            --pattern "securstack-package-metadata-$version.tar.gz" \
+            --dir dist
+          mkdir -p dist/packages
+          tar -xzf "dist/securstack-package-metadata-$version.tar.gz" -C dist/packages
+          test -f dist/packages/winget/SecurStack.CLI.yaml
+          test -f dist/packages/winget/SecurStack.CLI.installer.yaml
+          test -f dist/packages/winget/SecurStack.CLI.locale.en-US.yaml
+
+      - name: Publish WinGet manifest PR
+        run: node scripts/publish-winget-pr.mjs dist/packages

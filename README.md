@@ -206,6 +206,12 @@ The same immutable binaries are consumed by the managed IDE/plugin installer,
 Homebrew, APT, WinGet, Chocolatey and the optional npm compatibility wrapper.
 Package-manager metadata must reference a versioned URL and SHA-256 value.
 
+Release publication is tag-driven: pushing `vX.Y.Z` builds all supported
+platform binaries, publishes the canonical download directory, creates the
+GitHub release and renders package-manager metadata. Follow-up workflows then
+publish Chocolatey, update the Homebrew tap and open or update the WinGet PR
+when the corresponding secrets are configured.
+
 For a local platform build:
 
 ```bash

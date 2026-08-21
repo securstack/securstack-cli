@@ -6,12 +6,18 @@ on:
       version:
         description: "CLI version to publish, without the leading v. Defaults to package.json."
         required: false
+  workflow_run:
+    workflows:
+      - Release standalone CLI
+    types:
+      - completed
 
 permissions:
   contents: read
 
 jobs:
   publish:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: windows-latest
     env:
       GH_TOKEN: ${{ github.token }}
