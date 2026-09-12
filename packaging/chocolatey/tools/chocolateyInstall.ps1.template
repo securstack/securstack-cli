@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+$toolsDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $packageArgs = @{
   packageName    = 'securstack'
   url64bit       = '__WINDOWS_X64_URL__'

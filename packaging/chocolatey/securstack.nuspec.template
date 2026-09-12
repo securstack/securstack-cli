@@ -7,9 +7,15 @@
     <authors>SecurStack</authors>
     <projectUrl>https://securstack.io</projectUrl>
     <packageSourceUrl>https://github.com/securstack/securstack-cli</packageSourceUrl>
+    <projectSourceUrl>https://github.com/securstack/securstack-cli</projectSourceUrl>
+    <docsUrl>https://securstack.io/docs/en</docsUrl>
+    <bugTrackerUrl>https://github.com/securstack/securstack-cli/issues</bugTrackerUrl>
+    <iconUrl>https://securstack.io/logo/favicon.ico</iconUrl>
     <licenseUrl>https://securstack.io/legal/terms</licenseUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <summary>CLI for SecurStack repository security scans and Shielding workflows.</summary>
     <description>SecurStack CLI for repository security scans and Shielding workflows.</description>
+    <releaseNotes>https://github.com/securstack/securstack-cli/releases/tag/v__VERSION__</releaseNotes>
     <tags>securstack security devsecops cli</tags>
   </metadata>
   <files>
