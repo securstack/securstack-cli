@@ -29,6 +29,14 @@ workflow. That workflow builds the standalone executables, publishes the
 canonical download directory, creates the GitHub release, publishes the optional
 npm compatibility installer and attaches `securstack-package-metadata-<version>.tar.gz`.
 
+The npm package `@securstack/cli` uses npm trusted publishing from the
+GitHub-hosted `release.yml` workflow. Configure the package on npmjs.com with
+GitHub organization `securstack`, repository `securstack-cli`, workflow file
+`release.yml`, and permission to run `npm publish`. Create or refresh this
+connection immediately before the next release: npm requires the first
+successful publish from a new connection within two days. The publish job uses
+GitHub OIDC (`id-token: write`) and does not need an npm secret.
+
 After the release workflow succeeds:
 
 - `Publish Chocolatey package` runs automatically and pushes the rendered
@@ -46,7 +54,6 @@ Required GitHub repository secrets:
   `SECURSTACK_DOWNLOADS_SSH_USER`, `SECURSTACK_DOWNLOADS_SSH_PRIVATE_KEY`,
   `SECURSTACK_DOWNLOADS_SSH_KNOWN_HOSTS` and `SECURSTACK_DOWNLOADS_PATH`:
   production download server publication.
-- `SECURSTACK_NPM_TOKEN`: optional npm publication as the `securstack` npm user.
 - `SECURSTACK_CHOCOLATEY_API_KEY`: optional Chocolatey Community Repository
   publication.
 - `SECURSTACK_GITHUB_AUTOMATION_TOKEN`: optional GitHub automation token for

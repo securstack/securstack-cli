@@ -1,4 +1,4 @@
-import { copyFileSync, chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,7 +55,9 @@ writeFileSync(seaConfig, JSON.stringify({
 }, null, 2));
 
 execFileSync(process.execPath, ['--experimental-sea-config', seaConfig], { stdio: 'inherit' });
+rmSync(output, { force: true });
 copyFileSync(process.execPath, output);
+if (platform !== 'windows') chmodSync(output, 0o755);
 
 if (platform === 'darwin') {
   spawnSync('codesign', ['--remove-signature', output], { stdio: 'ignore' });
@@ -79,6 +81,10 @@ if (platform === 'darwin') {
 if (platform !== 'windows') chmodSync(output, 0o755);
 
 const version = execFileSync(output, ['--version'], { encoding: 'utf8' }).trim();
+const expectedVersion = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
+if (version !== expectedVersion) {
+  throw new Error(`Built CLI version ${version} does not match package version ${expectedVersion}`);
+}
 console.log(`Built ${output} (SecurStack CLI ${version})`);
 
 function normalizePlatform(value) {

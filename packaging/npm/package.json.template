@@ -6,5 +6,6 @@
   "scripts": { "postinstall": "node install.js" },
   "files": ["bin", "install.js"],
   "engines": { "node": ">=20" },
+  "repository": { "type": "git", "url": "https://github.com/securstack/securstack-cli" },
   "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" }
 }

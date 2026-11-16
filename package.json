@@ -1,6 +1,6 @@
 {
   "name": "@securstack/cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Local SecurStack CLI for repository scans, CI/CD workflows, and Shielding operations.",
   "private": true,
   "type": "module",

@@ -12,7 +12,7 @@ import { createGzip } from 'node:zlib';
 import { canonicalApiAttestationProofString, runtimeThreatTypes } from '@securstack/core/shielding-attestation';
 
 export const defaultApiUrl = 'https://api.securstack.io/api';
-export const cliVersion = '0.2.0';
+export const cliVersion = '0.2.1';
 const configDir = join(homedir(), '.securstack');
 const configPath = join(configDir, 'config.json');
 const defaultIgnoreDirs = new Set(['.git', 'node_modules', 'dist', 'build', 'coverage', '.next', '.turbo', '.cache', '.idea', '.vscode-test']);
